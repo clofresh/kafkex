@@ -1,16 +1,14 @@
 defmodule Kafkex do
   def connect({host, port}, timeout \\ 500) when is_integer(port) and is_integer(port) do
-    options = [:binary, {:active, :false}]
+    options = [:binary, {:active, :false}, {:packet, :raw}]
     {:ok, socket} = :gen_tcp.connect(host, port, options, timeout)
     socket
   end
 
-  def metadata(socket, topics, correlation_id \\ 0, client_id \\ "kafkaex") do
+  def metadata(socket, topics, timeout, correlation_id \\ 0, client_id \\ "kafkaex") do
     request = encode_metadata_request(correlation_id, client_id, topics)
     :ok = :gen_tcp.send(socket, request)
-    response = recv_metadata_response(socket, 500)
-    :ok = :gen_tcp.close(socket)
-    response
+    recv_metadata_response(socket, timeout)
   end
 
   def encode_metadata_request(correlation_id, client_id, topics) do
@@ -70,6 +68,82 @@ defmodule Kafkex do
       {topic_error_code, topic, partition_metadatas}
     end)
 
-    {brokers, topic_metadatas}
+    {correlation_id, brokers, topic_metadatas}
   end
+
+  def fetch(socket, fetch_requests, max_wait_time, min_bytes, timeout, correlation_id \\ 0, client_id \\ "kafkaex") do
+    request = encode_fetch_requests(correlation_id, client_id, fetch_requests, max_wait_time, min_bytes)
+    :ok = :gen_tcp.send(socket, request)
+    recv_fetch_response(socket, timeout)
+  end
+
+  def encode_fetch_requests(correlation_id, client_id, fetch_requests, max_wait_time, min_bytes) do
+    api_version = 0
+    api_key = 1
+    replica_id = -1
+    client_id_size = byte_size(client_id)
+    {topic_partitions_size, encoded_topic_partitions} = encode_fetch_topic_partitions(fetch_requests, 0, 0, [])
+    request_size = 2 + 2 + 4 + 2 + client_id_size + 4 + 4 + 4 + topic_partitions_size
+
+    [<<request_size::size(32), api_key::size(16), api_version::size(16),
+       correlation_id::size(32), client_id_size::size(16), client_id::binary-size(client_id_size), replica_id::size(32),
+       max_wait_time::size(32), min_bytes::size(32)>>] ++ encoded_topic_partitions
+  end
+
+  def encode_fetch_topic_partitions([{topic, partitions} | topic_partitions], size, count, encoded) do
+    {partitions_size, encoded_partitions} = encode_fetch_partitions(partitions, 0, 0, [])
+    topic_size = byte_size(topic)
+    encode_fetch_topic_partitions(topic_partitions, size + 2 + topic_size + partitions_size, count + 1, [encoded, <<topic_size::size(16), topic::binary>>, encoded_partitions])
+  end
+
+  def encode_fetch_topic_partitions([], size, count, encoded) do
+    {size + 4, List.flatten [<<count::size(32)>>, encoded]}
+  end
+
+  def encode_fetch_partitions([{partition, fetch_offset, max_bytes} | partitions], size, count, encoded) do
+    encode_fetch_partitions(partitions, size + 4 + 8 + 4, count + 1, [encoded, <<partition::size(32), fetch_offset::size(64), max_bytes::size(32)>>])
+  end
+
+  def encode_fetch_partitions([], size, count, encoded) do
+    {size + 4, [<<count::size(32)>>, encoded]}
+  end
+
+  def recv_fetch_response(socket, timeout) do
+    {:ok, <<response_size::size(32)>>} = :gen_tcp.recv(socket, 4, timeout)
+    {:ok, <<correlation_id::size(32), num_topics::size(32)>>} = :gen_tcp.recv(socket, 8, timeout)
+    {correlation_id, Enum.map(1..num_topics, fn(_) ->
+      {:ok, <<topic_size::size(16)>>} = :gen_tcp.recv(socket, 2, timeout)
+      {:ok, <<topic::binary-size(topic_size), num_partitions::size(32)>>} = :gen_tcp.recv(socket, topic_size + 4, timeout)
+      {topic, Enum.map(1..num_partitions, fn(_) ->
+        {:ok, <<partition::size(32), error_code::size(16), highwater_mark_offset::size(64), message_set_size::(32)>>} = :gen_tcp.recv(socket, 4 + 2 + 8 + 4, timeout)
+        decoded_message_set = case message_set_size do
+                                0 -> []
+                                message_set_size ->
+                                  {:ok, encoded_message_set} = :gen_tcp.recv(socket, message_set_size, timeout) # Might need to batch this read if there are lots of messages or big ones
+                                  decode_message_set(encoded_message_set, [])
+                              end
+        {partition, error_code, highwater_mark_offset, decoded_message_set}
+      end)}
+    end)}
+  end
+
+  def decode_message_set(<<offset::size(64), message_size::size(32), crc::size(32), magic::size(8), attributes::size(8), key_size::size(32)-big-signed-integer, rest::binary>>, messages) do
+    case key_size do
+      -1 ->
+        <<value_size::size(32), rest2::binary>> = rest
+        <<value::binary-size(value_size), rest3::binary>> = rest2
+        # Check crc, magic, compression etc
+        decode_message_set(rest3, [messages, {offset, value}])
+      key_size ->
+        <<key::binary-size(key_size), value_size::size(32), rest2::binary>> = rest
+        <<value::binary-size(value_size), rest3::binary>> = rest2
+        # Check crc, magic, compression etc
+        decode_message_set(rest3, [messages, {offset, key, value}])
+      end
+  end
+
+  def decode_message_set(<<>>, messages) do
+    List.flatten(messages)
+  end
+
 end
