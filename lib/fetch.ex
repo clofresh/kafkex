@@ -50,22 +50,18 @@ defmodule Kafkex.Fetch do
     {size + 4, [<<count::size(32)>>, encoded]}
   end
 
-  def decode_message_set(<<offset::size(64), message_size::size(32), crc::size(32), magic::size(8), attributes::size(8), key_size::size(32)-big-signed-integer, rest::binary>>, messages) do
-    case key_size do
-      key_size when key_size <= 0 ->
-        <<value_size::size(32), rest2::binary>> = rest
-        <<value::binary-size(value_size), rest3::binary>> = rest2
-        # Check crc, magic, compression etc
-        decode_message_set(rest3, [messages, {offset, value}])
-      key_size ->
-        <<key::binary-size(key_size), value_size::size(32), rest2::binary>> = rest
-        <<value::binary-size(value_size), rest3::binary>> = rest2
-        # Check crc, magic, compression etc
-        decode_message_set(rest3, [messages, {offset, key, value}])
-      end
+  def decode_message_set(<<offset::size(64), message_size::size(32), crc::size(32), magic::size(8), attributes::size(8), key_size::size(32)-big-signed-integer, key::binary-size(key_size), value_size::size(32), value::binary-size(value_size), rest::binary>>, messages) when key_size <= 0 do
+    # Check crc, magic, compression etc
+    decode_message_set(rest, [messages, {offset, value}])
   end
 
-  def decode_message_set(<<>>, messages) do
+  def decode_message_set(<<offset::size(64), message_size::size(32), crc::size(32), magic::size(8), attributes::size(8), key_size::size(32)-big-signed-integer, key::binary-size(key_size), value_size::size(32), value::binary-size(value_size), rest::binary>>, messages) when key_size > 0 do
+    # Check crc, magic, compression etc
+    decode_message_set(rest, [messages, {offset, key, value}])
+  end
+
+  # This will match when rest is empty or if it's a partial message
+  def decode_message_set(rest, messages) do
     List.flatten(messages)
   end
 end
