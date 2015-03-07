@@ -31,4 +31,20 @@ defmodule KafkexTest do
       :gen_tcp.close(socket)
     end
   end
+
+  test "produce request" do
+    socket = Kafkex.connect({'localhost', 19092})
+    try do
+      response = Kafkex.produce(socket, [{"test0", [{0, ["yo", "sup"]},
+                                                    {1, ["not much"]}]},
+                                          {"test1", [{1, ["blah"]}]}],
+                                1, 1000)
+      [{"test1", [{1, 0, o1}]}, {"test0", [{1, 0, o01}, {0, 0, o00}]}] = response
+      assert o1 > 0
+      assert o01 > 0
+      assert o00 > 0
+    after
+      :gen_tcp.close(socket)
+    end
+  end
 end
