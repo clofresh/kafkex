@@ -2,6 +2,20 @@ defmodule Kafkex.Metadata do
   @api_key 3
   @api_version 0
 
+  @type correlation_id :: number
+  @type broker_id :: number
+  @type broker_host :: String.t
+  @type broker_port :: number
+  @type error_code :: number
+  @type topic :: String.t
+  @type partition :: number
+  @type leader_broker_id :: broker_id
+  @type replicas :: [broker_id]
+  @type isr :: replicas
+  @type partition_meta :: {error_code, partition, leader_broker_id, replicas, isr}
+  @type broker :: {broker_id, broker_host, broker_port}
+  @type t :: {correlation_id, [broker], [{error_code, topic, [partition_meta]}]}
+
   def encode(correlation_id, client_id, topics) do
     {encoded_topics_size, encoded_topics} = encode_metadata_topics(topics)
     client_id_size = byte_size(client_id)

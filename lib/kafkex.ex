@@ -5,12 +5,14 @@ defmodule Kafkex do
 
   @client_id "kafkex"
 
+  @spec connect({String.t, number}, number) :: :gen_tcp.socket()
   def connect({host, port}, timeout \\ 500) when is_integer(port) and is_integer(port) do
     options = [:binary, {:active, :false}, {:packet, :raw}]
     {:ok, socket} = :gen_tcp.connect(host, port, options, timeout)
     socket
   end
 
+  @spec metadata(:gen_tcp.socket(), [String.t], number, number, String.t) :: Metadata.t
   def metadata(socket, topics, timeout, correlation_id \\ 0, client_id \\ @client_id) do
     request = Metadata.encode(correlation_id, client_id, topics)
     :ok = :gen_tcp.send(socket, request)
