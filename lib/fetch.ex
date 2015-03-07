@@ -52,7 +52,7 @@ defmodule Kafkex.Fetch do
 
   def decode_message_set(<<offset::size(64), message_size::size(32), crc::size(32), magic::size(8), attributes::size(8), key_size::size(32)-big-signed-integer, rest::binary>>, messages) do
     case key_size do
-      -1 ->
+      key_size when key_size <= 0 ->
         <<value_size::size(32), rest2::binary>> = rest
         <<value::binary-size(value_size), rest3::binary>> = rest2
         # Check crc, magic, compression etc

@@ -14,25 +14,7 @@ defmodule KafkexTest do
     end
   end
 
-  test "fetch request" do
-    socket = Kafkex.connect({'localhost', 19092})
-    try do
-      messages = Kafkex.fetch(socket, [{"test0", [{0, 0, 1024*1024}, {1, 0, 1024*1024}]},
-                                       {"test1", [{0, 0, 1024*1024}, {1, 0, 1024*1024}]}],
-                              1000, 1024, 5000, 12)
-      assert messages == {12,
-              [{"test1",
-                [{0, 0, 0, []},
-                 {1, 0, 4, [{0, "qwe"}, {1, "rqw"}, {2, "543"}, {3, "4523"}]}]},
-               {"test0",
-                [{0, 0, 0, []},
-                 {1, 0, 4, [{0, "test"}, {1, "test"}, {2, "adf"}, {3, "asdf"}]}]}]}
-    after
-      :gen_tcp.close(socket)
-    end
-  end
-
-  test "produce request" do
+  test "produce then fetch" do
     socket = Kafkex.connect({'localhost', 19092})
     try do
       response = Kafkex.produce(socket, [{"test0", [{0, ["yo", "sup"]},
@@ -40,9 +22,17 @@ defmodule KafkexTest do
                                           {"test1", [{1, ["blah"]}]}],
                                 1, 1000)
       [{"test1", [{1, 0, o1}]}, {"test0", [{1, 0, o01}, {0, 0, o00}]}] = response
-      assert o1 > 0
-      assert o01 > 0
-      assert o00 > 0
+
+      max_bytes = 1024
+      messages = Kafkex.fetch(socket, [{"test0", [{0, o00, max_bytes}, {1, o01, max_bytes}]},
+                                       {"test1", [{1, o1, max_bytes}]}],
+                              1000, 1024, 5000, 12)
+      assert messages == {12,
+            [{"test1", [{1, 0, o1 + 1, [{o1, "blah"}]}]},
+             {"test0",
+              [{0, 0, o00 + 2, [{o00, "yo"}, {o00 + 1, "sup"}]}, {1, 0, o01 + 1, [{o01, "not much"}]}]}]}
+
+
     after
       :gen_tcp.close(socket)
     end
